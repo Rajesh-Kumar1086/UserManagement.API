@@ -1,10 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Data.SqlClient;
+using System.Linq;
 using System.Net.Http;
+using System.Net.Mail;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using System.Web;
+using System.Web.Configuration;
 using System.Web.Http;
 using System.Web.Http.ModelBinding;
 using Microsoft.AspNet.Identity;
@@ -13,9 +20,11 @@ using Microsoft.AspNet.Identity.Owin;
 using Microsoft.Owin.Security;
 using Microsoft.Owin.Security.Cookies;
 using Microsoft.Owin.Security.OAuth;
+using UserManagement.API.Common;
 using UserManagement.API.Models;
 using UserManagement.API.Providers;
 using UserManagement.API.Results;
+using UserManagement.API.Services;
 
 namespace UserManagement.API.Controllers
 {
@@ -25,16 +34,17 @@ namespace UserManagement.API.Controllers
     {
         private const string LocalLoginProvider = "Local";
         private ApplicationUserManager _userManager;
-
+        private ApplicationRoleManager _roleManager;
         public AccountController()
         {
         }
 
         public AccountController(ApplicationUserManager userManager,
-            ISecureDataFormat<AuthenticationTicket> accessTokenFormat)
+            ISecureDataFormat<AuthenticationTicket> accessTokenFormat, ApplicationRoleManager roleManager)
         {
             UserManager = userManager;
             AccessTokenFormat = accessTokenFormat;
+            RoleManager = roleManager;
         }
 
         public ApplicationUserManager UserManager
@@ -46,6 +56,17 @@ namespace UserManagement.API.Controllers
             private set
             {
                 _userManager = value;
+            }
+        }
+        public ApplicationRoleManager RoleManager
+        {
+            get
+            {
+                return _roleManager ?? Request.GetOwinContext().GetUserManager<ApplicationRoleManager>();
+            }
+            private set
+            {
+                _roleManager = value;
             }
         }
 
@@ -125,7 +146,7 @@ namespace UserManagement.API.Controllers
 
             IdentityResult result = await UserManager.ChangePasswordAsync(User.Identity.GetUserId(), model.OldPassword,
                 model.NewPassword);
-            
+
             if (!result.Succeeded)
             {
                 return GetErrorResult(result);
@@ -134,8 +155,11 @@ namespace UserManagement.API.Controllers
             return Ok();
         }
 
-        // POST api/Account/SetPassword
-        [Route("SetPassword")]
+
+
+
+            // POST api/Account/SetPassword
+            [Route("SetPassword")]
         public async Task<IHttpActionResult> SetPassword(SetPasswordBindingModel model)
         {
             if (!ModelState.IsValid)
@@ -258,9 +282,9 @@ namespace UserManagement.API.Controllers
             if (hasRegistered)
             {
                 Authentication.SignOut(DefaultAuthenticationTypes.ExternalCookie);
-                
-                 ClaimsIdentity oAuthIdentity = await user.GenerateUserIdentityAsync(UserManager,
-                    OAuthDefaults.AuthenticationType);
+
+                ClaimsIdentity oAuthIdentity = await user.GenerateUserIdentityAsync(UserManager,
+                   OAuthDefaults.AuthenticationType);
                 ClaimsIdentity cookieIdentity = await user.GenerateUserIdentityAsync(UserManager,
                     CookieAuthenticationDefaults.AuthenticationType);
 
@@ -327,17 +351,163 @@ namespace UserManagement.API.Controllers
             {
                 return BadRequest(ModelState);
             }
-
             var user = new ApplicationUser() { UserName = model.Email, Email = model.Email };
 
+            user.IsDeleted = false;
+            user.IsActive = false;
+            user.CreatedDate = DateTime.Now;
+            user.ModifyDate = DateTime.Now;
+            user.Activation = Guid.NewGuid();
             IdentityResult result = await UserManager.CreateAsync(user, model.Password);
-
+            if (result.Succeeded)
+            {
+                MailServer mailServer = new MailServer();
+                mailServer.smtpAddress = ConfigurationManager.AppSettings["Host"];
+                mailServer.portNumber = int.Parse(ConfigurationManager.AppSettings["Port"]);
+                mailServer.enableSSL = bool.Parse(ConfigurationManager.AppSettings["SSL"]);
+                mailServer.emailFromAddress = ConfigurationManager.AppSettings["FromEmail"];
+                mailServer.password = ConfigurationManager.AppSettings["Password"];
+                mailServer.emailToAddress = model.Email;
+                var host = "localhost";
+                var port = "44346";
+                var varifyUrl = "https://" + host + ":" + port + "/api/Account/UserConfirm/" + user.Activation;
+                mailServer.subject = "Your account is successfull created";
+                mailServer.body = "<br/><br/>We are excited to tell you that your account is" +
+                   " successfully created. Please click on the below link to verify your account" +
+                      " <br/><br/><a href='" + varifyUrl + "'>" + varifyUrl + "</a> ";
+                try
+                {
+                    MailHelper.SendEmail(mailServer);
+                    //  return "Registration has been done,And Account activation link" + "has been sent your eamil id:" + model.Email;
+                }
+                catch (Exception ex)
+                {
+                    //result.Errors = ex.Message;
+                }
+            }
             if (!result.Succeeded)
             {
                 return GetErrorResult(result);
             }
-
             return Ok();
+        }
+        // POST api/Account/Login
+        [AllowAnonymous]
+        [Route("Login")]
+        public LoginResponseModel Login(LoginRequestModel model)
+        {
+            if (ModelState.IsValid)
+            {
+                // IOwinContext owinContext = HttpContext.GetOwinContext();
+                // IAuthenticationManager authenticationManager = owinContext.Authentication;
+                var user = UserManager.Find(model.Email, model.Password);
+
+                if (user != null)
+                {
+                    if (user.IsDeleted)
+                    {
+                        return new LoginResponseModel
+                        {
+                            Massage = "User already deleted",
+                            status = false
+                        };
+                    }
+                    if (!user.IsActive)
+                    {
+                        return new LoginResponseModel
+                        {
+                            Massage = "User not active, please confirm user by mail",
+                            status = false
+                        };
+
+                    }
+
+                    var identity = UserManager.CreateIdentity(user, DefaultAuthenticationTypes.ExternalBearer);
+                    // Sign in cookie
+                    var properties = new AuthenticationProperties(
+                        new System.Collections.Generic.Dictionary<string, string>
+                        {
+                        { "userName", model.Email }
+                        })
+                    { IsPersistent = false /* model.Remember */ };
+                    AuthenticationTicket ticket = new AuthenticationTicket(identity, properties);
+                    var token = Startup.OAuthOptions.AccessTokenFormat.Protect(ticket);
+
+                    return new LoginResponseModel
+                    {
+                        token = token,
+                        UserName = model.Email,
+                        status = true
+                    };
+                }
+                else
+                {
+                    return new LoginResponseModel
+                    {
+
+                        Massage = "User not found",
+                        status = false
+                    };
+                }
+
+
+            }
+            else
+            {
+                return new LoginResponseModel
+                {
+                    Massage = "Invalid user",
+                    status = true
+                };
+            }
+
+
+        }
+        [AllowAnonymous]
+        [Route("ForgotPassword")]
+        public string ForgotPassword(string username)
+        {
+            string msg = "";
+            if (username != null)
+            {
+                try
+                {
+                    var user = UserManager.FindByEmail(username);
+                    if (user.IsActive)
+                    {
+                        string url = HttpContext.Current.Request.Url.AbsoluteUri;
+                        int resetCode = new Random().Next();
+                        StringBuilder builder = new StringBuilder();
+                        MailMessage informMessage = new MailMessage();
+                        var host = "localhost";
+                        var port = "44346";
+                        informMessage.From = new MailAddress(ConfigurationManager.AppSettings["FromEmail"]);
+                        informMessage.To.Add(username);
+                        var varifyUrl = "https://" + host + ":" + port + "/api/Account/SetPassword/";
+                        informMessage.Subject = "Reset Password";
+                        informMessage.Body = "<br/><br/>We are excited to tell you that your account is" +
+                           " successfully created. Please click on the below link to verify your account" +
+                              " <br/><br/><a href='" + varifyUrl + "'>" + varifyUrl + "</a> ";
+                        // string body = string.Format("<br /><a target='_blank' href='{0}SetPassword?username={1}&key={2}' style='background-color:#ccc;padding:5px;text-decoration:none;cursor:pointer;border:1px solid #000;'>Reset Password</a>", "https://localhost:44315/Api/Account/", username, resetCode);
+                        informMessage.IsBodyHtml = true;
+                        EmailService emailService = new EmailService();
+                        emailService.SendMail(informMessage);
+                        msg = "Please check your mail";
+                    }
+                    else
+                    {
+                        msg = "User not activated";
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                    msg = ex.Message;
+                }
+
+            }
+            return msg;
+
         }
 
         // POST api/Account/RegisterExternal
@@ -368,7 +538,7 @@ namespace UserManagement.API.Controllers
             result = await UserManager.AddLoginAsync(user.Id, info.Login);
             if (!result.Succeeded)
             {
-                return GetErrorResult(result); 
+                return GetErrorResult(result);
             }
             return Ok();
         }
@@ -390,6 +560,7 @@ namespace UserManagement.API.Controllers
         {
             get { return Request.GetOwinContext().Authentication; }
         }
+
 
         private IHttpActionResult GetErrorResult(IdentityResult result)
         {
@@ -489,6 +660,124 @@ namespace UserManagement.API.Controllers
             }
         }
 
+        #endregion
+        #region UserManager
+        [Authorize(Roles = "admin")]
+        [Route("users/{id:guid}/roles")]
+        [HttpPut]
+        public async Task<IHttpActionResult> AssignRolesToUser(string id, string[] rolesToAssign)
+        {
+            if (rolesToAssign == null)
+            {
+                return this.BadRequest("No roles specified");
+            }
+
+            ///find the user we want to assign roles to
+            var appUser = await this.UserManager.FindByIdAsync(id);
+
+            if (appUser == null || appUser.IsDeleted)
+            {
+                return NotFound();
+            }
+
+            ///check if the user currently has any roles
+            var currentRoles = await this.UserManager.GetRolesAsync(appUser.Id);
+
+
+            var rolesNotExist = rolesToAssign.Except(this.RoleManager.Roles.Select(x => x.Name)).ToArray();
+
+            if (rolesNotExist.Count() > 0)
+            {
+                ModelState.AddModelError("", string.Format("Roles '{0}' does not exist in the system", string.Join(",", rolesNotExist)));
+                return this.BadRequest(ModelState);
+            }
+
+            ///remove user from current roles, if any
+            IdentityResult removeResult = await this.UserManager.RemoveFromRolesAsync(appUser.Id, currentRoles.ToArray());
+
+
+            if (!removeResult.Succeeded)
+            {
+                ModelState.AddModelError("", "Failed to remove user roles");
+                return BadRequest(ModelState);
+            }
+
+            ///assign user to the new roles
+            IdentityResult addResult = await this.UserManager.AddToRolesAsync(appUser.Id, rolesToAssign);
+
+            if (!addResult.Succeeded)
+            {
+                ModelState.AddModelError("", "Failed to add user roles");
+                return BadRequest(ModelState);
+            }
+
+            return Ok(new { userId = id, rolesAssigned = rolesToAssign });
+        }
+        [Authorize(Roles = "admin")]
+        [HttpDelete]
+        [Route("user/{id:guid}")]
+        public IHttpActionResult DeleteUser(string id)
+        {
+            //check if such a user exists in the database
+            var userToDelete = this.UserManager.FindById(id);
+            if (userToDelete == null)
+            {
+                return this.NotFound();
+            }
+            else if (userToDelete.IsDeleted)
+            {
+                return this.BadRequest("User already deleted");
+            }
+            else
+            {
+                var con = ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString;
+                using (SqlConnection connection = new SqlConnection(con))
+                {
+                    using (SqlCommand command = new SqlCommand("dbo.DeleteUser", connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+                        command.Parameters.Add("@UserId", SqlDbType.NVarChar).Value = id;
+                        connection.Open();
+                        command.ExecuteNonQuery();
+                        connection.Close();
+                    }
+                }
+            }
+            return this.Ok();
+        }
+        [AllowAnonymous]
+        [HttpGet]
+        [Route("UserConfirm/{activationCode:guid}")]
+        public IHttpActionResult UserConfirm(Guid activationCode)
+        {
+            //check if such a user exists in the database
+            ApplicationDbContext context = new ApplicationDbContext();
+            var userToConfirm = context.Users.Where(x => x.Activation == activationCode).FirstOrDefault();
+            if (userToConfirm == null)
+            {
+                return this.NotFound();
+            }
+            else if (userToConfirm.IsDeleted)
+            {
+                return this.BadRequest("User already deleted");
+            }
+            else
+            {
+                var con = ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString;
+                using (SqlConnection connection = new SqlConnection(con))
+                {
+                    using (SqlCommand command = new SqlCommand("dbo.ConfirmUser", connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+                        command.Parameters.Add("@UserId", SqlDbType.NVarChar).Value = userToConfirm.Id;
+                        connection.Open();
+                        command.ExecuteNonQuery();
+                        connection.Close();
+                    }
+                }
+            }
+            return this.Ok("Your account activated successfully");
+        }
         #endregion
     }
 }

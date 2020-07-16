@@ -12,12 +12,14 @@ namespace UserManagement.API.Models
     {
         public string FirstName { get; set; }
         public string LastName { get; set; }
-        public DateTime DOB { get; set; }
+        public string FatherName { get; set; }
+        public DateTime? DOB { get; set; }
         public bool IsDeleted { get; set; }
         public bool IsActive { get; set; }
-        public DateTime CreatedDate { get; set; }
-        public DateTime ModifyDate { get; set; }
-        public DateTime LogOnTime { get; set; }
+        public Guid? Activation { get; set; }
+        public DateTime? CreatedDate { get; set; }
+        public DateTime? ModifyDate { get; set; }
+        public DateTime? LogOnTime { get; set; }
 
         public async Task<ClaimsIdentity> GenerateUserIdentityAsync(UserManager<ApplicationUser> manager, string authenticationType)
         {
@@ -26,6 +28,7 @@ namespace UserManagement.API.Models
             // Add custom user claims here
             return userIdentity;
         }
+      
     }
 
     public class ApplicationDbContext : IdentityDbContext<ApplicationUser>

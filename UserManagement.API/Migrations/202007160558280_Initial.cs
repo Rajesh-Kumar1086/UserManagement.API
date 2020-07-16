@@ -3,7 +3,7 @@ namespace UserManagement.API.Migrations
     using System;
     using System.Data.Entity.Migrations;
     
-    public partial class InitialCreate : DbMigration
+    public partial class Initial : DbMigration
     {
         public override void Up()
         {
@@ -37,12 +37,14 @@ namespace UserManagement.API.Migrations
                         Id = c.String(nullable: false, maxLength: 128),
                         FirstName = c.String(),
                         LastName = c.String(),
-                        DOB = c.DateTime(nullable: false,defaultValueSql: "GETDATE()"),
+                        FatherName = c.String(),
+                        DOB = c.DateTime(),
                         IsDeleted = c.Boolean(nullable: false),
                         IsActive = c.Boolean(nullable: false),
-                        CreatedDate = c.DateTime(nullable: false,defaultValueSql: "GETDATE()"),
-                        ModifyDate = c.DateTime(nullable: false,defaultValueSql: "GETDATE()"),
-                        LogOnTime = c.DateTime(nullable: false, defaultValueSql: DateTime.Now.ToString()),
+                        Activation = c.Guid(),
+                        CreatedDate = c.DateTime(),
+                        ModifyDate = c.DateTime(),
+                        LogOnTime = c.DateTime(),
                         Email = c.String(maxLength: 256),
                         EmailConfirmed = c.Boolean(nullable: false),
                         PasswordHash = c.String(),
