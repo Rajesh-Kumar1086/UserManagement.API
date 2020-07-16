@@ -733,9 +733,8 @@ namespace UserManagement.API.Controllers
                 var con = ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString;
                 using (SqlConnection connection = new SqlConnection(con))
                 {
-                    using (SqlCommand command = new SqlCommand("dbo.DeleteUser", connection))
+                    using (SqlCommand command = new SqlCommand("UPDATE dbo.AspNetUsers SET IsDeleted = 1 WHERE Id = @UserId", connection))
                     {
-                        command.CommandType = CommandType.StoredProcedure;
                         command.Parameters.Add("@UserId", SqlDbType.NVarChar).Value = id;
                         connection.Open();
                         command.ExecuteNonQuery();
@@ -766,9 +765,8 @@ namespace UserManagement.API.Controllers
                 var con = ConfigurationManager.ConnectionStrings["DefaultConnection"].ConnectionString;
                 using (SqlConnection connection = new SqlConnection(con))
                 {
-                    using (SqlCommand command = new SqlCommand("dbo.ConfirmUser", connection))
+                    using (SqlCommand command = new SqlCommand("UPDATE dbo.AspNetUsers SET IsActive = 1 WHERE Id = @UserId", connection))
                     {
-                        command.CommandType = CommandType.StoredProcedure;
                         command.Parameters.Add("@UserId", SqlDbType.NVarChar).Value = userToConfirm.Id;
                         connection.Open();
                         command.ExecuteNonQuery();
